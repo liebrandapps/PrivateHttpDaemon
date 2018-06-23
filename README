@@ -1,0 +1,35 @@
+PrivateHttpDaemon
+
+This project addresses the need to have a python based application server running as a daemon.
+
+The combination of the BaseHttpServer package with Daemon-Runner is not working too well. In fact Daemon Runner is
+no longer maintained. The experience is that the server process gets into a position where it can only be killed
+with a '-9' signal, whicb isn't a good practice. Plus there are issues with logging respectively handing over
+file descriptors.
+
+The other 'feature' I added to the server framework is that a 404 response quickly causes future requests to be
+ignored. This should keep scripts away that try out known vulnerabilities of other servers. This traffic floods the log
+file. The idea here is that a an application server should interact with a well testet application. 404 should normally
+not happen.
+
+Implementing own application server code is simple. You need to derive your own class from Handler and implement at
+least 2 out of 3 methods:
+
++ you must implement the method 'endPoint'. It returns a string which is used for URL matching
++ you must implement either 'doGET' or 'doPOST' (or both)
+
+A server can have multiple handler classes for different URLs. Make sure that the different endpoints are different
+for a string comparison to identify the correct handler.
+
+Have a look at echo.py in the sample package.
+
+The sample also shows how a server can run as a daemon or a normal process. Basically the process can (should) daemonize
+before any other setup takes place. This avoids problems with signal handlers, file descriptors etc.
+
+File Locations: Log & Pid
+
+In the sample, the log file and pid file are located in the current directory. Local directory allows to run more that
+one instance of the server on one host (with different ports...). Alternatively, placing these files on '/tmp' makes
+that there is always a clean system after reboot. - This only works for one instance, unless you change to individual
+names for these files.
+
