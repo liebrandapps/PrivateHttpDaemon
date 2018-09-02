@@ -15,7 +15,7 @@ not happen.
 Implementing own application server code is simple. You need to derive your own class from Handler and implement at
 least 2 out of 3 methods:
 
-+ you must implement the method 'endPoint'. It returns a string which is used for URL matching
++ you must implement the method 'endPoint'. It returns a a set of strings which are used for URL matching
 + you must implement either 'doGET' or 'doPOST' (or both)
 
 A server can have multiple handler classes for different URLs. Make sure that the different endpoints are different
