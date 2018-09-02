@@ -8,7 +8,7 @@ class EchoHandler(Handler):
         pass
 
     def endPoint(self):
-        return("/echo")
+        return(["/echo",])
 
     def doGET(self, path, headers):
         return [404, {}, ""]

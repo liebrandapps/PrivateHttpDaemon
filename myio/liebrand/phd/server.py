@@ -101,7 +101,9 @@ class HttpProcessor(threading.Thread):
         #pf.close()
 
         request = HTTPRequest(allData)
-        length = int(request.headers['content-length'])
+        length = 0
+        if request.headers.has_key('content-length'):
+            length = int(request.headers['content-length'])
         contentType=None
         if request.headers.has_key('content-type'):
             contentType = request.headers['content-type']
@@ -118,15 +120,19 @@ class HttpProcessor(threading.Thread):
         responseHeaders = None
         responseBody = None
         responseCode = 404
+        #self.log.debug(request.path)
         for h in self.handler:
-            #self.log.debug(h.endPoint())
-            if h.endPoint().upper() in request.path.upper():
-                if "POST" == request.command:
-                    (responseCode, responseHeaders, responseBody) = h.doPOST(request.path, request.headers, body)
-                    processed = True
-                if "GET" == request.command:
-                    (responseCode, responseHeaders, responseBody) = h.doGET(request.path, request.headers)
-                    processed = True
+            for e in h.endPoint():
+                #self.log.debug(e)
+                if e.upper() in request.path.upper() or "*" == e:
+                    if "POST" == request.command:
+                        (responseCode, responseHeaders, responseBody) = h.doPOST(request.path, request.headers, body)
+                        processed = True
+                    if "GET" == request.command:
+                        (responseCode, responseHeaders, responseBody) = h.doGET(request.path, request.headers)
+                        processed = True
+                    break
+            if processed:
                 break
         if processed:
             if responseCode == 200:
@@ -147,7 +153,7 @@ class HttpProcessor(threading.Thread):
             else:
                 self.clientSocket.sendall(self.createResponse(responseCode, request.responses[responseCode]))
         else:
-            self.log.debug("Path %s did not match any handler" % (request.path))
+            self.log.debug("[PHD] Path %s did not match any handler" % (request.path))
             self.clientSocket.sendall(self.createResponse(404, request.responses[404]))
             b = BlockedIP(self.address)
             globalBlockList[self.address] = b
@@ -204,7 +210,7 @@ class Server:
                     if rS is self.srvSocket:
                         (clientSocket, address) = self.srvSocket.accept()
                         strAddress = address[0] + ":" + str(address[1])
-                        self.log.debug("Connection from %s", strAddress)
+                        self.log.debug("[PHD] Connection from %s", strAddress)
                         if strAddress in globalBlockList:
                             globalBlockList[address].updateLastSeen()
                             clientSocket.close()
