@@ -10,6 +10,7 @@ from BaseHTTPServer import BaseHTTPRequestHandler
 from StringIO import StringIO
 from datetime import datetime
 import threading
+import ssl
 
 import psutil
 
@@ -50,13 +51,18 @@ class HTTPRequest(BaseHTTPRequestHandler):
 
 class HttpProcessor(threading.Thread):
 
-    def __init__(self, clientSocket, address, handler, log):
+    HEADER_PROTO = "Xprotocol"
+    PROTO_HTTP = "http"
+    PROTO_HTTPS = "https"
+
+    def __init__(self, clientSocket, address, handler, log, useSSL):
         super(HttpProcessor, self).__init__()
         self.clientSocket = clientSocket
         self.log = log
         self.handler = handler
         self.address = address
         self.timeout = 0.4
+        self.useSSL = useSSL
 
 
     def recvall(self):
@@ -81,9 +87,11 @@ class HttpProcessor(threading.Thread):
                     begin = time.time()
                 else:
                     time.sleep(self.timeout)
+            except ssl.SSLWantReadError, e:
+                time.sleep(0.5)
             except socket.error, e:
                 if e.args[0] == errno.EWOULDBLOCK:
-                    time.sleep(0.2)
+                    time.sleep(0.5)
                 else:
                     self.log.exception(e)
             # When a recv returns 0 bytes, other side has closed
@@ -121,6 +129,10 @@ class HttpProcessor(threading.Thread):
         responseBody = None
         responseCode = 404
         #self.log.debug(request.path)
+        if self.useSSL:
+            request.headers[HttpProcessor.HEADER_PROTO] = HttpProcessor.PROTO_HTTPS
+        else:
+            request.headers[HttpProcessor.HEADER_PROTO] = HttpProcessor.PROTO_HTTP
         for h in self.handler:
             for e in h.endPoint():
                 #self.log.debug(e)
@@ -182,13 +194,16 @@ class HttpProcessor(threading.Thread):
 
 class Server:
 
-    def __init__(self, port, handler, logger):
+    def __init__(self, port, handler, logger, sslConfig=None):
         self.handler = handler
         self.port = port
         self.log = logger
         self._terminate = False
         self.srvSocket = None
         self.blockList = {}
+        self.func = None
+        self.sslConfig = sslConfig
+        self.useSSL = sslConfig is not None
 
 
     def serve(self):
@@ -196,9 +211,18 @@ class Server:
         signal.signal(signal.SIGTERM, self.terminate)
         signal.signal(signal.SIGINT, self.terminate)
         socketArray = []
+
         self.srvSocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.srvSocket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.srvSocket.bind(('', self.port))
+        if self.useSSL:
+            self.log.info("[PHD] Using SSL")
+            self.useSSL = True
+            sslContext = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+            sslContext.load_cert_chain(certfile=self.sslConfig[0], keyfile=self.sslConfig[1])
+            sslContext.options |= ssl.OP_NO_TLSv1 | ssl.OP_NO_TLSv1_1
+            sslContext.set_ciphers('EECDH+AESGCM:EDH+AESGCM:AES256+EECDH:AES256+EDH')
+            self.srvSocket=sslContext.wrap_socket(self.srvSocket, server_side=True)
         self.srvSocket.listen(5)
         self.controlPipe = os.pipe()
         socketArray.append(self.controlPipe[0])
@@ -216,7 +240,7 @@ class Server:
                             clientSocket.close()
                             self.log.debug("Blocking request from %s" % (strAddress))
                             continue
-                        proc=HttpProcessor(clientSocket, strAddress, self.handler, self.log)
+                        proc = HttpProcessor(clientSocket, strAddress, self.handler, self.log, self.useSSL)
                         proc.start()
                     if rS is self.controlPipe:
                         os.read(self.controlPipe[0], 1)
@@ -228,11 +252,18 @@ class Server:
                         b = globalBlockList[a]
                         if (now - b.getLastSeen()).seconds > 360:
                             del globalBlockList[b.getAddress()]
+            except socket.error, (_errno, _strerror):
+                if _errno == 0:
+                    continue
             except select.error, (_errno, _strerror):
                 if _errno == errno.EINTR:
                     continue
+                self.log.error("[PHD] select.error %d %s" % (_errno, _strerror))
+            except ssl.SSLError as e:
+                self.log.error("[PHD:SSL] SSL Error %s", e)
 
         self.log.info("[PHD] Terminating Server Thread")
+
 
     def terminate(self, sigNo, stackFrame):
         if sigNo == signal.SIGINT:
@@ -242,6 +273,14 @@ class Server:
         self._terminate = True
         os.write(self.controlPipe[1], 'x')
         self.srvSocket.close()
+        if self.func is not None:
+            self.func(sigNo, stackFrame)
+
+    def ownSignalHandler(self, func):
+        self.func = func
+
+    def isSSL(self):
+        return self.useSSL
 
 
 class Daemon:
